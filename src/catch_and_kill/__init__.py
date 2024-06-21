@@ -1,6 +1,7 @@
 #! /usr/bin/python3
 
 import re
+from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Optional
@@ -18,6 +19,12 @@ try:
 except PackageNotFoundError:  # pragma: no cover
     __version__ = "unknown"
 
+
+class AssayType(str, Enum):
+    scrnaseq = "scrnaseq"
+    scatacseq = "scatacseq"
+
+
 catch_and_kill = typer.Typer(no_args_is_help=True)
 
 
@@ -31,10 +38,25 @@ def version_callback(value: Annotated[bool, typer.Option()] = True) -> None:  # 
 
 @catch_and_kill.command()
 def find_and_rename(
-    count_folder: Annotated[Path, typer.Option("--counts")],
-    sample_prefix: Annotated[str, typer.Option("--prefix")],
-    output_folder: Annotated[Optional[Path], typer.Option("--output")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry_run", "-d")] = False,
+    count_folder: Annotated[
+        Path, typer.Option("--counts", help="Parent directory containing sample cellranger output subdirectories")
+    ],
+    sample_prefix: Annotated[str, typer.Option("--prefix", help="Prefix common among sample names.")],
+    sample_number_pattern: Annotated[
+        str,
+        typer.Option(
+            "-p", "--pattern", help="Regular expression to match the sample name/numbers after the sample_prefix"
+        ),
+    ] = r"([0-9]{2})",
+    output_folder: Annotated[
+        Optional[Path], typer.Option("--output", help="Path to where files should be moved")
+    ] = None,
+    assay_type: Annotated[
+        AssayType, typer.Option("--type", "-a", help="Type of assay performed, either scRNAseq or scATACseq.")
+    ] = AssayType.scrnaseq,
+    dry_run: Annotated[
+        bool, typer.Option("--dry_run", "-d", help="Do not actually rename files but show what will be renamed")
+    ] = False,
     version: Annotated[
         bool,
         typer.Option(
@@ -44,16 +66,30 @@ def find_and_rename(
         ),
     ] = False,
 ):
+    """Find all of the web_summary files created by cellranger count/multi or cellranger-atac count that are present
+    in sample subdirectories organized under a single parent and then more and rename the files
+    """
     if output_folder is None:
         output_folder = Path.cwd()
 
-    samples = [
-        _
-        for _ in count_folder.glob(f"{sample_prefix}*/outs/per_sample_outs/{sample_prefix}*/web_summary.html")
-        if _.is_file()
-    ]
+    # allow explicit assay type argument because maybe the guess below will get it wrong?
+    if assay_type == AssayType.scrnaseq:
+        samples = [
+            _
+            for _ in count_folder.glob(f"{sample_prefix}*/outs/per_sample_outs/{sample_prefix}*/web_summary.html")
+            if _.is_file()
+        ]
+    elif assay_type == AssayType.scatacseq:
+        samples = [_ for _ in count_folder.glob(f"{sample_prefix}*/outs/web_summary.html") if _.is_file()]
+    else:
+        # nothing specified? let's guess!
+        samples = [
+            _
+            for _ in count_folder.glob(f"{sample_prefix}*/outs/per_sample_outs/{sample_prefix}*/web_summary.html")
+            if _.is_file()
+        ] or [_ for _ in count_folder.glob(f"{sample_prefix}*/outs/web_summary.html") if _.is_file()]
 
-    sample_numbers = [re.search(sample_prefix + r"([0-9]{2})", str(_)).group(1) for _ in samples]
+    sample_numbers = [re.search(sample_prefix + sample_number_pattern, str(_))[1] for _ in samples]
 
     for i, summary_file in tenumerate(samples):
         rprint(
@@ -76,6 +112,9 @@ def to_me_my_count_metrics(
         ),
     ] = False,
 ):
+    """Find the 'metrics_summary.csv' files for the output from cellranger-count and -multi for multiple samples that
+    are organized under a single directory.
+    """
     sample_names = sorted(
         [
             _.name
@@ -102,8 +141,11 @@ def to_me_my_count_metrics(
 
 @catch_and_kill.command(name="atac-metrics")
 def to_me_my_accessability_metrics(
-    access_folder: Annotated[Path, typer.Argument],
-    output: Annotated[Path, typer.Argument],
+    access_folder: Annotated[
+        Path,
+        typer.Argument(help="Path to the parent folder under which the scATAC-seq count folder for each sample are"),
+    ],
+    output: Annotated[Path, typer.Argument(help="Path to where the compiled report should be written")],
     version: Annotated[
         bool,
         typer.Option(
@@ -113,6 +155,9 @@ def to_me_my_accessability_metrics(
         ),
     ] = False,
 ):
+    """Find the 'summary.csv' files for the output from cellranger-atac for multiple samples that are organized under
+    a single directory.
+    """
     sample_names = sorted(
         [
             _.name
