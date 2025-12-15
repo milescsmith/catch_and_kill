@@ -1,6 +1,10 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "catch_and_kill"
-version = "1.1.0"
+version = "1.2.0"
 description = "Default template for PDM package"
 authors = [
     {name = "Miles Smith", email = "miles-smith@omrf.org"},
@@ -10,19 +14,17 @@ dependencies = [
     "rich>=13.7.1",
     "tqdm>=4.66.4",
     "polars>=0.20.31",
+    "msgspec>=0.20.0",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 readme = "README.md"
 license = {text = "GPL-3.0"}
 
 [project.scripts]
 cak = "catch_and_kill:catch_and_kill"
 
-[tool.pdm]
-distribution = false
-
-[tool.pdm.dev-dependencies]
+[dependency-groups]
 dev = [
-    "ruff>=0.4.8",
-    "mypy>=1.10.0",
+    "ruff>=0.14.9",
+    "ty>=0.0.1a34",
 ]

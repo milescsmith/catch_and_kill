@@ -68,7 +68,7 @@ $ count-metrics [OPTIONS] COUNT_FOLDER OUTPUT
 
 ## `find-and-rename`
 
-Find all of the web_summary files created by cellranger count/multi or cellranger-atac count that are present
+Find all of the web_summary/qc_report files created by cellranger count/multi or cellranger-atac count that are present
 in sample subdirectories organized under a single parent and then more and rename the files
 
 **Usage**:
@@ -80,6 +80,7 @@ $ find-and-rename [OPTIONS]
 **Options**:
 
 * `--counts PATH`: Parent directory containing sample cellranger output subdirectories  [required]
+* `--summary-name STR`: Name of the Cell Ranger summary file. In older Cell Ranger versions it is 'web_summary.html', in newer it is 'qc_report.html' [default: 'web_summary.html']
 * `--prefix TEXT`: Prefix common among sample names.  [required]
 * `-p, --pattern TEXT`: Regular expression to match the sample name/numbers after the sample_prefix  [default: ([0-9]{2})]
 * `--output PATH`: Path to where files should be moved

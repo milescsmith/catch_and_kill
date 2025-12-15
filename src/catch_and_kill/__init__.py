@@ -1,11 +1,11 @@
 #! /usr/bin/python3
-
 import re
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
+import msgspec
 import polars as pl
 import typer
 from rich import print as rprint
@@ -48,9 +48,15 @@ def find_and_rename(
             "-p", "--pattern", help="Regular expression to match the sample name/numbers after the sample_prefix"
         ),
     ] = r"([0-9]{2})",
-    output_folder: Annotated[
-        Optional[Path], typer.Option("--output", help="Path to where files should be moved")
+    cellranger_version: Annotated[
+        int | None,
+        typer.Option(
+            "--cr_version",
+            # "-c",
+            help="What version of Cell Ranger produced this output? If not provided, will attempt to read it from the sample's '_versions' file",
+        ),
     ] = None,
+    output_folder: Annotated[Path | None, typer.Option("--output", help="Path to where files should be moved")] = None,
     assay_type: Annotated[
         AssayType, typer.Option("--type", "-a", help="Type of assay performed, either scRNAseq or scATACseq.")
     ] = AssayType.scrnaseq,
@@ -66,37 +72,62 @@ def find_and_rename(
         ),
     ] = False,
 ):
-    """Find all of the web_summary files created by cellranger count/multi or cellranger-atac count that are present
+    """Find all of the web_summary/qc_report files created by cellranger count/multi or cellranger-atac count that are present
     in sample subdirectories organized under a single parent and then more and rename the files
     """
     if output_folder is None:
         output_folder = Path.cwd()
 
     # allow explicit assay type argument because maybe the guess below will get it wrong?
-    if assay_type == AssayType.scrnaseq:
-        samples = [
-            _
-            for _ in count_folder.glob(f"{sample_prefix}*/outs/per_sample_outs/{sample_prefix}*/web_summary.html")
-            if _.is_file()
-        ]
-    elif assay_type == AssayType.scatacseq:
-        samples = [_ for _ in count_folder.glob(f"{sample_prefix}*/outs/web_summary.html") if _.is_file()]
-    else:
-        # nothing specified? let's guess!
-        samples = [
-            _
-            for _ in count_folder.glob(f"{sample_prefix}*/outs/per_sample_outs/{sample_prefix}*/web_summary.html")
-            if _.is_file()
-        ] or [_ for _ in count_folder.glob(f"{sample_prefix}*/outs/web_summary.html") if _.is_file()]
 
-    sample_numbers = [re.search(sample_prefix + sample_number_pattern, str(_))[1] for _ in samples]
+    sample_folders: list[Path] = [
+        _ for _ in count_folder.glob(f"{sample_prefix}*") if (_.is_dir() and _.joinpath("outs/").exists())
+    ]
+    if len(sample_folders) == 0:
+        msg = f"No valid Cell Ranger outputs were found at {count_folder!s}"
+        raise FileNotFoundError(msg)
+
+    if cellranger_version is None:
+        versions_file = sample_folders[0].joinpath("_versions")
+        if versions_file.exists():
+            raw_version = msgspec.json.decode(versions_file.read_bytes())["pipelines"]
+            cellranger_version = int(raw_version.split(".")[0])
+            msg = f"The Cell Ranger version was not provided. Inferring that it is [bold skyblue]{raw_version}[/] from the files found."
+            rprint(msg)
+        else:
+            msg = f"You did not pass the Cell Ranger version argument and the file used for guessing ({versions_file}) cannot be found"
+            raise ValueError(msg)
+
+    cellranger_version_where_changes_happened = 10
+    match x := cellranger_version:
+        case _ if x >= cellranger_version_where_changes_happened:
+            run_report_name = "qc_report.html"
+            report_location = f"{sample_prefix}*/outs"
+        case _ if x < cellranger_version_where_changes_happened:
+            run_report_name = "web_summary.html"
+            report_location = f"{sample_prefix}*/outs/per_sample_outs/{sample_prefix}*"
+
+    match assay_type:
+        case AssayType.scrnaseq:
+            samples = [_ for _ in count_folder.glob(f"{report_location}/{run_report_name}") if _.is_file()]
+        case AssayType.scatacseq:
+            samples = [_ for _ in count_folder.glob(f"{sample_prefix}*/outs/{run_report_name}") if _.is_file()]
+        case _:
+            # nothing specified? let's guess!
+            samples = [
+                _
+                for _ in count_folder.glob(f"{sample_prefix}*/outs/per_sample_outs/{sample_prefix}*/{run_report_name}")
+                if _.is_file()
+            ] or [_ for _ in count_folder.glob(f"{sample_prefix}*/outs/{run_report_name}") if _.is_file()]
+
+    sample_numbers = [x.group(1) for y in samples if (x := re.search(sample_prefix + sample_number_pattern, str(y)))]
 
     for i, summary_file in tenumerate(samples):
         rprint(
-            f"found [bold red]{summary_file.absolute()}[/bold red], moving to [bold green]{output_folder}/{sample_prefix}{sample_numbers[i]}_web_summary.html[/bold green]"
+            f"found [bold red]{summary_file.absolute()}[/bold red], moving to [bold green]{output_folder}/{sample_prefix}{sample_numbers[i]}_{run_report_name}[/bold green]"
         )
         if not dry_run:
-            summary_file.rename(f"{output_folder}/{sample_prefix}{sample_numbers[i]}_web_summary.html")
+            summary_file.rename(f"{output_folder}/{sample_prefix}{sample_numbers[i]}_{run_report_name}")
 
 
 @catch_and_kill.command(name="count-metrics")
